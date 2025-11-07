@@ -1,0 +1,26 @@
+# Wake Word Detection
+pvporcupine
+
+# Speech Recognition
+SpeechRecognition
+
+# Google Cloud APIs
+google-cloud-speech
+google-cloud-texttospeech
+
+# Google Generative AI (Gemini)
+google-generativeai
+
+# Audio
+pyaudio
+pygame
+torchaudio
+speechbrain
+
+# Voice Activity Detection
+webrtcvad-wheels
+
+# Utilidades
+numpy
+requests
+python-dotenv
