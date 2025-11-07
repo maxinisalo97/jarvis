@@ -180,10 +180,6 @@ class JarvisAssistant:
     def listen_for_wake_word_and_capture(self):
         """
         Escucha el wake word Y captura automáticamente lo que viene después
-        usando un buffer circular para no perder audio
-        
-        Returns:
-            tuple: (detected: bool, audio_file: str or None)
         """
         from collections import deque
         
@@ -197,7 +193,6 @@ class JarvisAssistant:
         
         print(f"\n🎤 Escuchando '{Config.WAKE_WORD}'...")
         
-        # Buffer circular para guardar últimos 2 segundos (para no perder el inicio)
         buffer_seconds = 2
         buffer_size = int(buffer_seconds * self.porcupine.sample_rate / self.porcupine.frame_length)
         audio_buffer = deque(maxlen=buffer_size)
@@ -213,27 +208,24 @@ class JarvisAssistant:
                     pcm
                 )
                 
-                # Guardar en buffer circular
                 audio_buffer.append(pcm)
-                
-                # Detectar wake word
                 keyword_index = self.porcupine.process(pcm_unpacked)
                 
                 if keyword_index >= 0:
                     print(f"✅ '{Config.WAKE_WORD.upper()}' detectado!")
                     self.play_confirmation_sound()
-                    # Capturar lo que viene DESPUÉS del wake word
                     print("🎧 Capturando pregunta...")
                     
-                    # Guardar los frames posteriores al wake word
                     post_wake_frames = []
-                    silence_frames = 0
                     speech_detected = False
-                    max_wait_frames = 200  # ~2 segundos de espera máxima
-                    silence_threshold = 90  # ~1 segundo de silencio
-                    frame_count = 0
                     
-                    # Usar VAD para detectar si hay voz después del wake word
+                    # Usar tiempo real 
+                    max_wait_time = 5  # Máximo 5 segundos de espera
+                    silence_duration = 2  # 2 segundos de silencio para terminar
+                    
+                    last_speech_time = time.time()
+                    start_time = time.time()
+                    
                     vad_stream = self.pa.open(
                         rate=16000,
                         channels=1,
@@ -242,10 +234,9 @@ class JarvisAssistant:
                         frames_per_buffer=480
                     )
                     
-                    while frame_count < max_wait_frames:
+                    while True:
                         frame = vad_stream.read(480, exception_on_overflow=False)
                         post_wake_frames.append(frame)
-                        frame_count += 1
                         
                         # Detectar si hay voz
                         try:
@@ -255,36 +246,38 @@ class JarvisAssistant:
                         
                         if is_speech:
                             speech_detected = True
-                            silence_frames = 0
-                        elif speech_detected:
-                            silence_frames += 1
+                            last_speech_time = time.time()
                         
-                        # Si detectó voz y luego 1 seg de silencio, terminar
-                        if speech_detected and silence_frames > silence_threshold:
-                            print("🛑 Pregunta capturada")
+                        # Tiempo transcurrido desde última voz
+                        silence_time = time.time() - last_speech_time
+                        total_time = time.time() - start_time
+                        
+                        # Si detectó voz y luego 2 segundos de silencio, terminar
+                        if speech_detected and silence_time >= silence_duration:
+                            print("🛑 Pregunta capturada (2 segundos de silencio)")
                             break
                         
-                        # Si pasaron 2 segundos sin detectar voz, asumir que no dijo nada
-                        if not speech_detected and frame_count > 66:  # ~2 segundos
+                        # Si pasaron 5 segundos sin detectar voz, asumir que no dijo nada
+                        if not speech_detected and total_time >= max_wait_time:
                             print("⏸️ No se detectó pregunta continua")
+                            break
+                        
+                        # Timeout máximo de 10 segundos total
+                        if total_time >= 10:
+                            print("⏱️ Tiempo máximo alcanzado")
                             break
                     
                     vad_stream.close()
                     audio_stream.close()
                     
-                    # Si NO detectó voz después del wake word, retornar None (debe saludar)
                     if not speech_detected:
                         return True, None
                     
-                    # Si SÍ detectó voz, guardar y retornar archivo
                     audio_data = b''.join(post_wake_frames)
-                    
-                    # Crear archivo temporal
                     temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
                     temp_filename = temp_file.name
                     temp_file.close()
                     
-                    # Guardar como WAV
                     audio_array = np.frombuffer(audio_data, dtype=np.int16)
                     save_audio_to_wav(temp_filename, audio_array, 16000)
                     
@@ -294,81 +287,83 @@ class JarvisAssistant:
             print("\n\n👋 Apagando Jarvis...")
             audio_stream.close()
             return False, None
-
-    
+        
     def capture_question(self):
         """
         Captura la pregunta del usuario después del wake word usando VAD
-        
-        Returns:
-            str: Path del archivo de audio temporal, o None si falla
         """
         audio_stream = self.pa.open(
             rate=Config.SAMPLE_RATE,
             channels=1,
             format=pyaudio.paInt16,
             input=True,
-            frames_per_buffer=480  # 30ms para VAD
+            frames_per_buffer=480
         )
         
         print("🎧 Escuchando tu pregunta...")
         
         frames = []
-        silence_frames = 0
         speech_started = False
-        max_frames = int(Config.MAX_RECORDING_TIME * Config.SAMPLE_RATE / 480)
-        frame_count = 0
-        silence_threshold = int(Config.SILENCE_DURATION * 50)  # 33 frames ≈ 1 seg
         
-        # Umbral mínimo de frames de voz (al menos 0.5 segundos)
-        min_speech_frames = 16  # ~0.5 segundos
-        speech_frame_count = 0
+        # ✅ NUEVO: Usar tiempo real
+        silence_duration = 2.0  # 2 segundos de silencio
+        max_recording_time = 15  # Máximo 10 segundos
+        min_speech_duration = 0.3  # Mínimo 0.3 segundos de voz
+        
+        last_speech_time = time.time()
+        start_time = time.time()
+        speech_start_time = None
         
         try:
-            while frame_count < max_frames:
+            while True:
                 frame = audio_stream.read(480, exception_on_overflow=False)
                 
-                frame_count += 1
-                
-                # VAD para detectar si hay voz
+                # Detectar si hay voz
                 try:
                     is_speech = self.vad.is_speech(frame, Config.SAMPLE_RATE)
                 except:
                     is_speech = False
                 
                 if is_speech:
-                    speech_started = True
-                    speech_frame_count += 1
-                    silence_frames = 0
+                    if not speech_started:
+                        speech_started = True
+                        speech_start_time = time.time()
+                    last_speech_time = time.time()
                     frames.append(frame)
                 elif speech_started:
-                    silence_frames += 1
                     frames.append(frame)
                 
+                # Calcular tiempos
+                current_time = time.time()
+                silence_time = current_time - last_speech_time
+                total_time = current_time - start_time
+                
                 # Si hay suficiente silencio después de hablar, terminar
-                if silence_frames > silence_threshold and speech_frame_count > min_speech_frames:
-                    print("🛑 Pregunta capturada")
+                if speech_started:
+                    speech_duration = current_time - speech_start_time
+                    
+                    if silence_time >= silence_duration and speech_duration >= min_speech_duration:
+                        print("🛑 Pregunta capturada (2 segundos de silencio)")
+                        break
+                
+                # Timeout máximo
+                if total_time >= max_recording_time:
+                    print("⏱️ Tiempo máximo alcanzado")
                     break
             
             audio_stream.close()
             
-            # Si no se detectó suficiente voz, retornar None
-            if speech_frame_count < min_speech_frames:
+            # Verificar que hubo suficiente voz
+            if not speech_started or (speech_start_time and (time.time() - speech_start_time) < min_speech_duration):
                 print("⚠️ No se detectó suficiente voz")
                 return None
             
             # Convertir frames a audio
             audio_data = b''.join(frames)
-            
-            # Crear archivo temporal
-            temp_file = tempfile.NamedTemporaryFile(
-                suffix='.wav', 
-                delete=False
-            )
+            temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
             temp_filename = temp_file.name
             temp_file.close()
             
-            # Guardar como WAV
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
             save_audio_to_wav(temp_filename, audio_array, Config.SAMPLE_RATE)
             
@@ -380,15 +375,16 @@ class JarvisAssistant:
             return None
 
 
+
     def classify_intent(self, text):
         """
         Clasifica la intención del texto para decidir si buscar o no
         """
         text_lower = text.lower()
-        
+        words = text_lower.split()
         # Detectar comando de registro de usuario de forma más específica
         # Solo si la frase es CORTA y directa
-        if len(text_lower.split()) <= 8:  # Máximo 5 palabras
+        if len(words) <= 8:  # Máximo 5 palabras
             if 'soy' in text_lower or 'me llamo' in text_lower or 'mi nombre es' in text_lower:
                 import re
                 
@@ -456,7 +452,6 @@ class JarvisAssistant:
             'tal vez', 'quizás', 'puede ser'
         ]
         
-        words = text_lower.split()
         if len(words) <= 2 and any(word in simple_responses for word in words):
             return 'stop', 'Entendido, señor'
         

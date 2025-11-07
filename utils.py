@@ -77,9 +77,24 @@ def is_local_command(text):
     """
     text_lower = text.lower()
     
-    # Comandos de hora
-    if any(word in text_lower for word in ['hora', 'horas', 'qué hora']):
-        return get_current_time()
+    # ✅ MEJORADO: Comandos de hora MÁS ESPECÍFICOS
+    # Solo si pregunta directamente la hora actual
+    hour_patterns = [
+        'qué hora es',
+        'que hora es',
+        'dime la hora',
+        'hora actual',
+        'cuál es la hora',
+        'cual es la hora'
+    ]
+    
+    # Verificar que pregunta la hora Y NO habla de otros conceptos
+    if any(pattern in text_lower for pattern in hour_patterns):
+        # Excluir si menciona conceptos astronómicos o específicos
+        excluded_words = ['mediodía solar', 'mediodia solar', 'salida', 'puesta', 'amanecer', 'atardecer']
+        
+        if not any(word in text_lower for word in excluded_words):
+            return get_current_time()
     
     # Comandos de fecha
     if any(word in text_lower for word in ['fecha', 'día es', 'qué día', 'hoy es']):
@@ -98,6 +113,7 @@ def is_local_command(text):
         return "Todos los sistemas funcionando correctamente, señor"
     
     return None
+
 def clean_text_for_speech(text):
     """
     Limpia el texto de Markdown y citas para TTS

@@ -48,7 +48,7 @@ class Config:
     
     # ==================== RECORDING CONFIG ====================
     SILENCE_DURATION = 1.0      # Segundos de silencio para terminar grabación
-    MAX_RECORDING_TIME = 10     # Máximo tiempo de grabación en segundos
+    MAX_RECORDING_TIME = 15     # Máximo tiempo de grabación en segundos
     SILENCE_THRESHOLD = 500     # Umbral de audio (ajustar según micrófono)
     
     # ==================== PERPLEXITY CONFIG ====================
